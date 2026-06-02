@@ -7,6 +7,7 @@ z3_add_component(spacer
   spacer_farkas_learner.cpp
   spacer_generalizers.cpp
   spacer_manager.cpp
+  spacer_profile.cpp
   spacer_prop_solver.cpp
   spacer_sym_mux.cpp
   spacer_util.cpp

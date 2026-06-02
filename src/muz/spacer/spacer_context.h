@@ -51,6 +51,7 @@ class context;
 class lemma_cluster;
 class lemma_cluster_finder;
 class lemma_global_generalizer;
+class spacer_profiler;
 
 typedef obj_map<datalog::rule const, app_ref_vector *> rule2inst;
 typedef obj_map<func_decl, pred_transformer *> decl2rel;
@@ -774,6 +775,9 @@ class pob {
     ptr_vector<pob>  m_kids;
     // lemmas created to block this pob (at any time, not necessarily active)
     ptr_vector<lemma> m_lemmas;
+    // profiling-only origin data for rule/tail attribution
+    datalog::rule const* m_profile_origin_rule;
+    unsigned m_profile_origin_tail_index;
 
     unsigned m_blocked_lvl;
     // clang-format on
@@ -879,6 +883,24 @@ public:
 
     const ptr_vector<lemma> &lemmas() const { return m_lemmas; }
     void add_lemma(lemma *new_lemma) { m_lemmas.push_back(new_lemma); }
+
+    // Purpose: Attach profile-only rule origin data to this POB.
+    // Input: The originating rule pointer and tail index inside that rule.
+    // Return: Nothing; updates profiling metadata without changing solving behavior.
+    void set_profile_origin(datalog::rule const* rule, unsigned tail_index) {
+        m_profile_origin_rule = rule;
+        m_profile_origin_tail_index = tail_index;
+    }
+
+    // Purpose: Return the profile-only originating rule for this POB.
+    // Input: None; it reads the POB metadata.
+    // Return: The originating rule pointer or null; this method has no side effects.
+    datalog::rule const* profile_origin_rule() const { return m_profile_origin_rule; }
+
+    // Purpose: Return the profile-only originating tail index for this POB.
+    // Input: None; it reads the POB metadata.
+    // Return: The tail index or UINT_MAX; this method has no side effects.
+    unsigned profile_origin_tail_index() const { return m_profile_origin_tail_index; }
 
     bool is_ground() const { return m_binding.empty(); }
     unsigned get_free_vars_size() const { return m_binding.size(); }
@@ -1150,6 +1172,7 @@ class context {
     lemma_global_generalizer *m_global_gen;
     lemma_generalizer    *m_expand_bnd_gen;
     lemma_cluster_finder *m_lmma_cluster;
+    scoped_ptr<spacer_profiler> m_profiler;
     stats                m_stats;
     model_converter_ref  m_mc;
     proof_converter_ref  m_pc;
@@ -1269,6 +1292,11 @@ class context {
     ~context();
 
     const fp_params &get_params() const { return m_params; }
+
+    // Purpose: Return the active Spacer profiler, if profiling is enabled.
+    // Input: None; it reads the current context state.
+    // Return: A profiler pointer or null; this method has no side effects.
+    spacer_profiler* profiler() const { return m_profiler.get(); }
     bool use_eq_prop() const { return m_use_eq_prop; }
     bool use_native_mbp() const { return m_use_native_mbp; }
     bool use_ground_pob() const { return m_ground_pob; }

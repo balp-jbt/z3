@@ -54,6 +54,7 @@ Notes:
 #include "muz/spacer/spacer_sat_answer.h"
 #include "muz/spacer/spacer_concretize.h"
 #include "muz/spacer/spacer_global_generalizer.h"
+#include "muz/spacer/spacer_profile.h"
 
 #define WEAKNESS_MAX 65535
 
@@ -67,7 +68,9 @@ pob::pob(pob *parent, pred_transformer &pt, unsigned level, unsigned depth,
       m_new_post(m_pt.get_ast_manager()), m_level(level), m_depth(depth),
       m_desired_level(0), m_open(true), m_use_farkas(true), m_in_queue(false), m_is_conjecture(false),
       m_enable_local_gen(true), m_enable_concretize(false), m_is_subsume(false),
-      m_enable_expand_bnd_gen(false), m_weakness(0), m_blocked_lvl(0),
+      m_enable_expand_bnd_gen(false), m_weakness(0),
+      m_profile_origin_rule(nullptr), m_profile_origin_tail_index(UINT_MAX),
+      m_blocked_lvl(0),
       m_concretize_pat(m_pt.get_ast_manager()),
       m_gas(0) {
     if (add_to_parent && m_parent) {
@@ -343,6 +346,7 @@ pob *derivation::create_next_child(model &mdl) {
     pob *n = m_premises[m_active].pt().mk_pob(&m_parent,
                                               prev_level (m_parent.level ()),
                                               m_parent.depth (), post, vars);
+    n->set_profile_origin(&m_rule, m_premises[m_active].get_oidx());
     IF_VERBOSE (1, verbose_stream ()
                 << "\n\tcreate_child: " << n->pt ().head ()->get_name ()
                 << " (" << n->level () << ", " << n->depth () << ") "
@@ -928,6 +932,9 @@ const datalog::rule *pred_transformer::find_rule(model &model,
     // SASSERT (r);
     // reached by a reachability fact
     if (!r) { is_concrete = true; }
+    if (r && ctx.profiler()) {
+        ctx.profiler()->record_rule_selected(*r, is_concrete, reach_pred_used);
+    }
     return r;
 }
 
@@ -2092,6 +2099,11 @@ bool pred_transformer::frames::propagate_to_next_level (unsigned level)
 {
     sort ();
     bool all = true;
+    unsigned attempted = 0;
+    unsigned propagated = 0;
+    unsigned failed = 0;
+    spacer_profiler* profiler = m_pt.get_context().profiler();
+    ptr_vector<lemma> attempted_lemmas;
 
 
     if (m_lemmas.empty()) { return all; }
@@ -2102,8 +2114,13 @@ bool pred_transformer::frames::propagate_to_next_level (unsigned level)
     for (unsigned i = 0, sz = m_lemmas.size(); i < sz && m_lemmas [i]->level() <= level;) {
         if (m_lemmas [i]->level () < level) {++i; continue;}
 
+        ++attempted;
+        if (profiler) {
+            attempted_lemmas.push_back(m_lemmas.get(i));
+        }
         unsigned solver_level;
         if (m_pt.is_invariant(tgt_level, m_lemmas.get(i), solver_level)) {
+            ++propagated;
             m_lemmas [i]->set_level (solver_level);
             m_pt.add_lemma_core (m_lemmas.get(i));
 
@@ -2114,7 +2131,17 @@ bool pred_transformer::frames::propagate_to_next_level (unsigned level)
             ++m_pt.m_stats.m_num_propagations;
         } else {
             all = false;
+            ++failed;
             ++i;
+        }
+    }
+
+    if (profiler && attempted > 0) {
+        profiler->record_propagation(level, m_pt, attempted, propagated, failed, all);
+        if (all) {
+            for (lemma* lem : attempted_lemmas) {
+                profiler->record_rule_origin_partial_candidate(*lem);
+            }
         }
     }
 
@@ -2316,6 +2343,13 @@ context::context(fp_params const& params, ast_manager& m) :
                                m_params.spacer_trace_file().bare_str(),
                                std::ios_base::out);
     }
+
+    symbol profile_file = m_params.spacer_profile_file();
+    if (m_params.spacer_profile() || profile_file.is_non_empty_string()) {
+        std::string prefix = profile_file.is_non_empty_string() ?
+            profile_file.bare_str() : "spacer-profile";
+        m_profiler = alloc(spacer_profiler, prefix);
+    }
 }
 
 context::~context()
@@ -2401,6 +2435,9 @@ void context::init_rules(datalog::rule_set& rules, decl2rel& rels)
 {
     scoped_watch _t_(m_init_rules_watch);
     m_context = &rules.get_context();
+    if (m_profiler) {
+        m_profiler->register_rules(rules);
+    }
 
     // Allocate collection of predicate transformers
     for (auto dit = rules.begin_grouped_rules(),
@@ -2779,6 +2816,10 @@ lbool context::solve(unsigned from_lvl)
 
     if (m_last_result == l_true) {
         m_stats.m_cex_depth = get_cex_depth ();
+    }
+
+    if (m_profiler) {
+        m_profiler->finish(m_last_result);
     }
 
     if (m_params.print_statistics ()) {
@@ -3242,12 +3283,24 @@ bool context::check_reachability ()
             initial_size = m_stats.m_num_lemmas;
         }
 
+        unsigned queue_size_before_pop = static_cast<unsigned>(m_pob_queue.size());
         node = m_pob_queue.top ();
         m_pob_queue.pop();
+        if (m_profiler) {
+            m_profiler->record_pob_event("pop", m_pob_queue.max_level(), *node, queue_size_before_pop, "");
+        }
         size_t old_sz = m_pob_queue.size();
         (void)old_sz;
         SASSERT (node->level () <= m_pob_queue.max_level ());
-        switch (expand_pob(*node, new_pobs)) {
+        lbool expand_res = expand_pob(*node, new_pobs);
+        if (m_profiler) {
+            char const* result = expand_res == l_true ? "reachable" :
+                (expand_res == l_false ? "blocked" :
+                 (new_pobs.empty() ? "undef" : "child_created"));
+            m_profiler->record_pob_event("expand_result", m_pob_queue.max_level(), *node,
+                                         static_cast<unsigned>(m_pob_queue.size()), result);
+        }
+        switch (expand_res) {
         case l_true:
             SASSERT(m_pob_queue.size() == old_sz);
             SASSERT(new_pobs.empty());
@@ -3269,6 +3322,10 @@ bool context::check_reachability ()
                         tout << "Adding back blocked pob at level "
                              << pob->level()
                              << " and depth " << pob->depth() << "\n");
+                    if (m_profiler) {
+                        m_profiler->record_pob_event("requeue", m_pob_queue.max_level(), *pob,
+                                                     static_cast<unsigned>(m_pob_queue.size()), "requeued");
+                    }
                     m_pob_queue.push(*pob);
                 }
             }
@@ -3282,7 +3339,13 @@ bool context::check_reachability ()
             if ((node->is_may_pob()) && new_pobs.size() == 0) {
                 close_all_may_parents(node);
             }
-            for (auto pob : new_pobs) {m_pob_queue.push(*pob);}
+            for (auto pob : new_pobs) {
+                if (m_profiler) {
+                    m_profiler->record_pob_event("requeue", m_pob_queue.max_level(), *pob,
+                                                 static_cast<unsigned>(m_pob_queue.size()), "requeued");
+                }
+                m_pob_queue.push(*pob);
+            }
             break;
         }
         new_pobs.reset();
@@ -3734,6 +3797,9 @@ lbool context::expand_pob(pob& n, pob_ref_buffer &out)
         if (is_new) {
             if (m_global) m_lmma_cluster->cluster(lemma_pob);
             m_stats.m_num_lemmas++;
+            if (m_profiler) {
+                m_profiler->record_pob_blocked(n);
+            }
         }
 
         // Optionally update the node to be the negation of the lemma
@@ -4003,6 +4069,11 @@ bool context::create_children(pob& n, datalog::rule const& r,
 {
     scoped_watch _w_ (m_create_children_watch);
     pred_transformer& pt = n.pt();
+    stopwatch profile_watch;
+    if (m_profiler) {
+        m_profiler->record_rule_expanded(r, reach_pred_used);
+        profile_watch.start();
+    }
 
     TRACE(spacer,
           tout << "Model:\n";
@@ -4051,7 +4122,11 @@ bool context::create_children(pob& n, datalog::rule const& r,
 
     if (m_use_gpdr && preds.size() > 1) {
         SASSERT(vars.empty());
-        return gpdr_create_split_children(n, r, phi, mdl, out);
+        bool ok = gpdr_create_split_children(n, r, phi, mdl, out);
+        if (m_profiler) {
+            m_profiler->record_child_creation(r, ok, profile_watch.get_seconds());
+        }
+        return ok;
     }
 
     derivation *deriv = alloc(derivation, n, r, phi, vars);
@@ -4077,6 +4152,9 @@ bool context::create_children(pob& n, datalog::rule const& r,
         sum = pt.get_origin_summary (mdl, prev_level(n.level()),
                                      j, reach_pred_used[j], &aux);
         if (!sum) {
+            if (m_profiler) {
+                m_profiler->record_child_creation(r, false, profile_watch.get_seconds());
+            }
             dealloc(deriv);
             return false;
         }
@@ -4088,6 +4166,9 @@ bool context::create_children(pob& n, datalog::rule const& r,
 
     // -- failed to create derivation, cleanup and bail out
     if (!kid) {
+        if (m_profiler) {
+            m_profiler->record_child_creation(r, false, profile_watch.get_seconds());
+        }
         dealloc(deriv);
         return false;
     }
@@ -4112,6 +4193,9 @@ bool context::create_children(pob& n, datalog::rule const& r,
     }
     out.push_back(kid);
     m_stats.m_num_queries++;
+    if (m_profiler) {
+        m_profiler->record_child_creation(r, true, profile_watch.get_seconds());
+    }
     return true;
 }
 
