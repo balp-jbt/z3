@@ -113,6 +113,9 @@
     X(api_bug) \
     X(api_special_relations) \
     X(arith_rewriter) \
+    X(range_predicate) \
+    X(regex_range_collapse) \
+    X(seq_rewriter) \
     X(check_assumptions) \
     X(smt_context) \
     X(theory_dl) \
@@ -163,6 +166,7 @@
     X(rcf) \
     X(polynorm) \
     X(qe_arith) \
+    X(mbp_qel) \
     X(expr_substitution) \
     X(sorting_network) \
     X(theory_pb) \
@@ -192,7 +196,11 @@
     X(ho_matcher) \
     X(finite_set) \
     X(finite_set_rewriter) \
-    X(fpa)
+    X(fpa) \
+    X(seq_regex_bisim) \
+    X(term_enumeration) \
+    X(lcube) \
+    X(psmt)
 
 #define FOR_EACH_TEST(X, X_ARGV) \
     FOR_EACH_ALL_TEST(X, X_ARGV) \
@@ -533,7 +541,7 @@ int main(int argc, char ** argv) {
     }
 
 #ifndef __EMSCRIPTEN__
-    if (num_jobs > 0)
+    if (num_jobs > 0 && (test_all || requested_tests.size() > 1))
         return run_parallel(argv[0], test_all, num_jobs, extra_args, requested_tests);
 #endif
 

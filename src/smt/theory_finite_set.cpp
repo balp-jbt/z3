@@ -171,7 +171,6 @@ namespace smt {
     void theory_finite_set::add_in_axioms(enode *in, var_data *d) {
         SASSERT(u.is_in(in->get_expr()));
         auto e = in->get_arg(0)->get_expr();
-        auto set1 = in->get_arg(1);
         for (enode *setop : d->m_parent_setops) {
             SASSERT(
                 any_of(enode::args(setop), [&](enode *arg) { return in->get_arg(1)->get_root() == arg->get_root(); }));
@@ -240,8 +239,9 @@ namespace smt {
         return true;
     }
 
-    void theory_finite_set::relevant_eh(app* t) {
-        add_immediate_axioms(t);
+    void theory_finite_set::relevant_eh(expr* t) {
+        if (is_app(t))
+            add_immediate_axioms(to_app(t));
     }
 
     void theory_finite_set::apply_sort_cnstr(enode* n, sort* s) {
@@ -437,7 +437,7 @@ namespace smt {
                     return lit == arg;
             };
             auto lit1 = clause.get(0);
-            auto lit2 = clause.get(1);
+            [[maybe_unused]] auto lit2 = clause.get(1);
             auto position = 0;
             if (is_complement_to(is_true, lit1, e))
                 position = 0;
@@ -833,7 +833,6 @@ namespace smt {
         }
 
         app *mk_range_value(model_generator &mg, expr_ref_vector const &values) {
-            unsigned i = 0;
             arith_value av(th.m);
             av.init(&th.ctx);
             vector<std::tuple<rational, enode *, bool>> elems;

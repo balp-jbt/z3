@@ -1987,8 +1987,21 @@ sig
   (** extract sub-sequence starting at index given by second argument and of length provided by third argument *)
   val mk_seq_extract : context -> Expr.expr -> Expr.expr -> Expr.expr -> Expr.expr
 
-  (** replace first occurrence of second argument by third *)
+  (** [mk_seq_replace ctx seq target replacement] replaces the first occurrence
+      of [target] within [seq] with [replacement]. *)
   val mk_seq_replace : context -> Expr.expr -> Expr.expr -> Expr.expr -> Expr.expr
+
+  (** [mk_seq_replace_all ctx seq target replacement] replaces all occurrences
+      of [target] within [seq] with [replacement]. *)
+  val mk_seq_replace_all : context -> Expr.expr -> Expr.expr -> Expr.expr -> Expr.expr
+
+  (** [mk_seq_replace_re ctx seq re replacement] replaces the first occurrence
+      matching the regular expression [re] within [seq] with [replacement]. *)
+  val mk_seq_replace_re : context -> Expr.expr -> Expr.expr -> Expr.expr -> Expr.expr
+
+  (** [mk_seq_replace_re_all ctx seq re replacement] replaces all occurrences
+      matching the regular expression [re] within [seq] with [replacement]. *)
+  val mk_seq_replace_re_all : context -> Expr.expr -> Expr.expr -> Expr.expr -> Expr.expr
 
   (** a unit sequence at index provided by second argument *)
   val mk_seq_at : context -> Expr.expr -> Expr.expr -> Expr.expr
@@ -2067,6 +2080,9 @@ sig
   (** the regular expression complement *)
   val mk_re_complement : context -> Expr.expr -> Expr.expr
 
+  (** the regular expression difference *)
+  val mk_re_diff : context -> Expr.expr -> Expr.expr -> Expr.expr
+
   (** the regular expression that accepts no sequences *)
   val mk_re_empty : context -> Sort.sort -> Expr.expr
 
@@ -2137,6 +2153,31 @@ sig
 
   (** Create a finite set of integers in the range [low, high]. *)
   val mk_range : context -> Expr.expr -> Expr.expr -> Expr.expr
+
+end
+
+(** Special relation constructors *)
+module SpecialRelation :
+sig
+  (** Create a linear (total) order relation over the given sort.
+      The [id] parameter distinguishes multiple linear orders over the same sort. *)
+  val mk_linear_order : context -> Sort.sort -> int -> FuncDecl.func_decl
+
+  (** Create a partial order relation over the given sort.
+      The [id] parameter distinguishes multiple partial orders over the same sort. *)
+  val mk_partial_order : context -> Sort.sort -> int -> FuncDecl.func_decl
+
+  (** Create a piecewise linear order relation over the given sort.
+      The [id] parameter distinguishes multiple piecewise linear orders over the same sort. *)
+  val mk_piecewise_linear_order : context -> Sort.sort -> int -> FuncDecl.func_decl
+
+  (** Create a tree order relation over the given sort.
+      The [id] parameter distinguishes multiple tree orders over the same sort. *)
+  val mk_tree_order : context -> Sort.sort -> int -> FuncDecl.func_decl
+
+  (** Create the transitive closure of a binary relation.
+      The resulting relation is recursive. *)
+  val mk_transitive_closure : context -> FuncDecl.func_decl -> FuncDecl.func_decl
 
 end
 

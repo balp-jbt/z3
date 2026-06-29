@@ -16,7 +16,7 @@ Abstract:
      All variables x, y, z, .. can eventually be eliminated, but the tactic requires a global 
      analysis between each elimination. We address this by using reference counts and maintaining
      a heap of reference counts.
-   - it does not accomodate side constraints. The more general invertibility reduction methods, such 
+   - it does not accommodate side constraints. The more general invertibility reduction methods, such 
      as those introduced for bit-vectors use side constraints.
    - it is not modular: we detach the expression invertion routines to self-contained code.
 
@@ -413,10 +413,9 @@ void elim_unconstrained::update_model_trail(generic_model_converter& mc, vector<
         case generic_model_converter::instruction::HIDE:
             break;
         case generic_model_converter::instruction::ADD:
-            //            new_def = entry.m_def;
-            // (*rp)(new_def);
-            new_def = m.mk_const(entry.m_f);
-            sub->insert(new_def, new_def, nullptr, nullptr);
+            new_def = entry.m_def;
+            (*rp)(new_def);
+            sub->insert(m.mk_const(entry.m_f), new_def, nullptr, nullptr);
             break;
         }
     }

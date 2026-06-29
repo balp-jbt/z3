@@ -20,7 +20,7 @@ It traverses the same sub-terms many times.
 
 Outline of a presumably better scheme:
 
-1. maintain map FV: term -> bit-set where bitset reprsents set of free variables. Assume the number of variables is bounded.
+1. maintain map FV: term -> bit-set where bitset represents set of free variables. Assume the number of variables is bounded.
    FV is built from initial terms.
 2. maintain parent: term -> term-list of parent occurrences.
 3. repeat
@@ -244,12 +244,7 @@ namespace euf {
         unsigned count = 0;
         vector<dependent_expr> old_fmls;
         dep_eq_vector eqs;
-        struct reset_unsafe {
-            solve_eqs& s;
-            reset_unsafe(solve_eqs& s): s(s) {}
-            ~reset_unsafe() { s.m_unsafe_vars.reset(); }
-        };
-        reset_unsafe ru(*this);
+        auto _reset_unsafe = on_scope_exit([&]() { m_unsafe_vars.reset(); });
         do {
             old_fmls.reset();
             m_subst_ids.reset();

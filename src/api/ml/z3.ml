@@ -1297,6 +1297,9 @@ struct
   let mk_seq_contains = Z3native.mk_seq_contains
   let mk_seq_extract = Z3native.mk_seq_extract
   let mk_seq_replace = Z3native.mk_seq_replace
+  let mk_seq_replace_all = Z3native.mk_seq_replace_all
+  let mk_seq_replace_re = Z3native.mk_seq_replace_re
+  let mk_seq_replace_re_all = Z3native.mk_seq_replace_re_all
   let mk_seq_at = Z3native.mk_seq_at
   let mk_seq_length = Z3native.mk_seq_length
   let mk_seq_nth = Z3native.mk_seq_nth
@@ -1322,6 +1325,7 @@ struct
   let mk_re_loop = Z3native.mk_re_loop
   let mk_re_intersect ctx args = Z3native.mk_re_intersect ctx (List.length args) args
   let mk_re_complement = Z3native.mk_re_complement
+  let mk_re_diff = Z3native.mk_re_diff
   let mk_re_empty = Z3native.mk_re_empty
   let mk_re_full = Z3native.mk_re_full
   let mk_char = Z3native.mk_char
@@ -1348,6 +1352,15 @@ struct
   let mk_map = Z3native.mk_finite_set_map
   let mk_filter = Z3native.mk_finite_set_filter
   let mk_range = Z3native.mk_finite_set_range
+end
+
+module SpecialRelation =
+struct
+  let mk_linear_order = Z3native.mk_linear_order
+  let mk_partial_order = Z3native.mk_partial_order
+  let mk_piecewise_linear_order = Z3native.mk_piecewise_linear_order
+  let mk_tree_order = Z3native.mk_tree_order
+  let mk_transitive_closure = Z3native.mk_transitive_closure
 end
 
 module FloatingPoint =
