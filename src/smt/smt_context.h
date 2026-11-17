@@ -1795,6 +1795,34 @@ namespace smt {
                 throw default_exception("user propagator must be initialized");
             m_user_propagator->register_fixed(fixed_eh);
         }
+
+        // Associates source notifications with the native propagator so fresh instances inherit them.
+        void user_propagate_register_sources(user_propagator::source_eh_t& query, user_propagator::source_eh_t& learned) {
+            if (!m_user_propagator) {
+                throw default_exception("user propagator is not initialized");
+            }
+            m_user_propagator->register_sources(query, learned);
+        }
+        // Retains original query conditions only when a user propagator is present.
+        void user_propagate_query(expr_ref_vector const& conditions) {
+            if (m_user_propagator) {
+                m_user_propagator->query_origin(conditions);
+            }
+        }
+        // Forwards explicit bit coordinates before the next query is internalized.
+        void user_propagate_definitions(expr_ref_vector const& names, expr_ref_vector const& values) {
+            if (m_user_propagator) {
+                m_user_propagator->definitions(names, values);
+            }
+        }
+
+        // Forwards actual Boolean assignment notifications to the SMT user propagator.
+        void user_propagate_register_assignment(user_propagator::assignment_eh_t& assignment_eh) {
+            if (!m_user_propagator) {
+                throw default_exception("user propagator must be initialized");
+            }
+            m_user_propagator->register_assignment(assignment_eh);
+        }
         
         void user_propagate_register_eq(user_propagator::eq_eh_t& eq_eh) {
             if (!m_user_propagator) 

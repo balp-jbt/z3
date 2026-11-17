@@ -1475,6 +1475,8 @@ Z3_DECLARE_CLOSURE(Z3_push_eh,    void, (void* ctx, Z3_solver_callback cb));
 Z3_DECLARE_CLOSURE(Z3_pop_eh,     void, (void* ctx, Z3_solver_callback cb, unsigned num_scopes));
 Z3_DECLARE_CLOSURE(Z3_fresh_eh,   void*, (void* ctx, Z3_context new_context));
 Z3_DECLARE_CLOSURE(Z3_fixed_eh,   void, (void* ctx, Z3_solver_callback cb, Z3_ast t, Z3_ast value));
+Z3_DECLARE_CLOSURE(Z3_assignment_eh, void, (void* ctx, Z3_solver_callback cb, Z3_ast literal, unsigned kind, unsigned prefix));
+Z3_DECLARE_CLOSURE(Z3_source_eh, void, (void* ctx, Z3_solver_callback cb, unsigned count, Z3_ast const* expressions));
 Z3_DECLARE_CLOSURE(Z3_eq_eh,      void, (void* ctx, Z3_solver_callback cb, Z3_ast s, Z3_ast t));
 Z3_DECLARE_CLOSURE(Z3_final_eh,   void, (void* ctx, Z3_solver_callback cb));
 Z3_DECLARE_CLOSURE(Z3_created_eh, void, (void* ctx, Z3_solver_callback cb, Z3_ast t));
@@ -7367,6 +7369,47 @@ extern "C" {
     void Z3_API Z3_solver_propagate_fixed(Z3_context c, Z3_solver s, Z3_fixed_eh fixed_eh);
 
     /**
+       \brief Report signed Boolean trail literals without registering every variable.
+       Kinds are 0 (decision or assumption), 1 (root unit), 2 (binary),
+       3 (clause), and 4 (theory justification). Prefix is the native trail position.
+       Complete reasons are requested lazily during this callback using Z3_solver_propagate_reason.
+       def_API('Z3_solver_propagate_assignment', VOID, (_in(CONTEXT), _in(SOLVER), _fnptr(Z3_assignment_eh)))
+    */
+    void Z3_API Z3_solver_propagate_assignment(Z3_context c, Z3_solver s, Z3_assignment_eh handler);
+
+    /**
+       \brief Register capture-only query-boundary and complete learned-clause callbacks.
+       Query expressions contain original assertions and user assumptions; learned expressions form a signed clause.
+       Install these handlers before asserting formulas on a simplifier solver.
+       Callbacks must not submit consequences or register observations. Fresh instances inherit both handlers.
+       def_API('Z3_solver_propagate_sources', VOID, (_in(CONTEXT), _in(SOLVER), _fnptr(Z3_source_eh), _fnptr(Z3_source_eh)))
+    */
+    void Z3_API Z3_solver_propagate_sources(Z3_context c, Z3_solver s, Z3_source_eh query, Z3_source_eh learned);
+
+
+    /**
+       \brief Return the complete clause explaining the currently reported assignment.
+       An unreasoned decision returns an empty vector. Only valid during its assignment callback.
+       def_API('Z3_solver_propagate_reason', AST_VECTOR, (_in(CONTEXT), _in(SOLVER_CALLBACK)))
+    */
+    Z3_ast_vector Z3_API Z3_solver_propagate_reason(Z3_context c, Z3_solver_callback cb);
+
+    /**
+       \brief Read existing Boolean state without registering or internalizing an expression.
+       Return -2 when not internalized, -1 when unassigned, 0 for false and 1 for true.
+       Prefix receives the current native trail length. Valid during a user-propagator callback.
+       def_API('Z3_solver_propagate_assignment_value', INT, (_in(CONTEXT), _in(SOLVER_CALLBACK), _in(AST), _out(UINT)))
+    */
+    int Z3_API Z3_solver_propagate_assignment_value(Z3_context c, Z3_solver_callback cb, Z3_ast atom, unsigned* prefix);
+
+    /**
+       \brief Resolve a signed predicate to its existing native Boolean identity in semantic vocabulary.
+       Return the input unchanged when it has not been internalized; this operation never registers it.
+       def_API('Z3_solver_propagate_canonical', AST, (_in(CONTEXT), _in(SOLVER_CALLBACK), _in(AST)))
+    */
+    Z3_ast Z3_API Z3_solver_propagate_canonical(Z3_context c, Z3_solver_callback cb, Z3_ast expression);
+
+    /**
        \brief register a callback on final check.
        This provides freedom to the propagator to delay actions or implement a branch-and bound solver.
        The final check is invoked when all decision variables have been assigned by the solver.
@@ -7754,4 +7797,3 @@ extern "C" {
 #endif // __cplusplus
 
 /**@}*/
-

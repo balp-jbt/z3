@@ -20,12 +20,16 @@ Author:
 #include "smt/theory_bv.h"
 #include "smt/theory_user_propagator.h"
 #include "smt/smt_context.h"
+#include "smt/smt_conflict_resolution.h"
 #include "ast/ast_ll_pp.h"
 
 using namespace smt;
 
 theory_user_propagator::theory_user_propagator(context& ctx):
     theory(ctx, ctx.get_manager().mk_family_id(user_propagator::plugin::name())),
+    m_encode(ctx.get_manager()), m_decode(ctx.get_manager()),
+    m_definition_names(ctx.get_manager()), m_definition_values(ctx.get_manager()),
+    m_query_origin(ctx.get_manager()),
     m_var2expr(ctx.get_manager()),
     m_push_popping(false),
     m_to_add(ctx.get_manager())
@@ -49,7 +53,8 @@ void theory_user_propagator::add_expr(expr* term, bool ensure_enode) {
     force_push();
     expr_ref r(m);
     expr* e = term;
-    ctx.get_rewriter()(e, r);
+    m_encode(e, r);
+    ctx.get_rewriter()(r);
     TRACE(user_propagate, tout << "add " << mk_bounded_pp(e, m) << "\n");
     if (!is_ground(r)) {
         if (m_add_expr_fresh.contains(term))
@@ -93,7 +98,8 @@ bool theory_user_propagator::propagate_cb(
            ctx.display(tout << "redundant consequence: " << mk_pp(conseq, m) << "\n"));
 
     expr_ref _conseq(conseq, m);
-    ctx.get_rewriter()(conseq, _conseq);
+    m_encode(conseq, _conseq);
+    ctx.get_rewriter()(_conseq);
     if (!ctx.get_manager().is_true(_conseq) && !ctx.get_manager().is_false(_conseq))
         ctx.mark_as_relevant((expr*)_conseq);
 
@@ -149,6 +155,24 @@ theory * theory_user_propagator::mk_fresh(context * new_ctx) {
     }
     th->add(ctx, m_push_eh, m_pop_eh, m_fresh_eh);
     if ((bool)m_fixed_eh) th->register_fixed(m_fixed_eh);
+    if (m_assignment_eh) {
+        th->register_assignment(m_assignment_eh);
+    }
+    th->register_sources(m_query_eh, m_learned_eh);
+    ast_translation translation(m, new_ctx->get_manager());
+    expr_ref_vector names(new_ctx->get_manager()), values(new_ctx->get_manager());
+    for (unsigned i = 0; i < m_definition_names.size(); ++i) {
+        names.push_back(translation(m_definition_names.get(i)));
+        values.push_back(translation(m_definition_values.get(i)));
+    }
+    th->definitions(names, values);
+    if (m_has_query_origin) {
+        expr_ref_vector conditions(new_ctx->get_manager());
+        for (expr* condition : m_query_origin) {
+            conditions.push_back(translation(condition));
+        }
+        th->query_origin(conditions);
+    }
     if ((bool)m_final_eh) th->register_final(m_final_eh);
     if ((bool)m_eq_eh) th->register_eq(m_eq_eh);
     if ((bool)m_diseq_eh) th->register_diseq(m_diseq_eh);
@@ -280,8 +304,180 @@ void theory_user_propagator::pop_scope_eh(unsigned num_scopes) {
     m_pop_eh(m_user_context, this, num_scopes);
 }
 
+// Includes pending native trail notifications alongside mandatory theory work.
 bool theory_user_propagator::can_propagate() {
-    return m_qhead < m_prop.size() || m_to_add_qhead < m_to_add.size() || m_replay_qhead < m_clauses_to_replay.size();
+    return m_qhead < m_prop.size() || m_to_add_qhead < m_to_add.size() || m_replay_qhead < m_clauses_to_replay.size() ||
+        (m_assignment_eh && m_assignment_qhead < ctx.assigned_literals().size());
+}
+
+// Reads the current assignment's actual reason without searching the clause database.
+void theory_user_propagator::reason_cb(expr_ref_vector& result) {
+    result.reset();
+    if (m_reason_literal == null_literal) {
+        throw default_exception("assignment reason is only available during its callback");
+    }
+    auto lit = m_reason_literal;
+    if (ctx.is_assumption(lit)) {
+        return;
+    }
+    auto reason = ctx.get_justification(lit.var());
+    switch (reason.get_kind()) {
+    case b_justification::CLAUSE: {
+        auto* clause = reason.get_clause();
+        for (literal item : *clause) {
+            result.push_back(ctx.literal2expr(item));
+        }
+        // Transient auxiliary clauses are simplified under the current branch, not just root units.
+        // Restore their removed antecedents before exporting a globally reusable explanation.
+        if (is_axiom(clause->get_kind()) && clause->get_justification()) {
+            literal_vector antecedents;
+            ctx.get_cr().justification2literals(clause->get_justification(), antecedents);
+            for (literal item : antecedents) {
+                result.push_back(ctx.literal2expr(~item));
+            }
+        }
+        m_decode(result);
+        return;
+    }
+    case b_justification::BIN_CLAUSE:
+        result.push_back(ctx.literal2expr(~reason.get_literal()));
+        break;
+    case b_justification::AXIOM:
+        if (ctx.get_assign_level(lit) > ctx.get_base_level()) {
+            return;
+        }
+        break;
+    case b_justification::JUSTIFICATION: {
+        literal_vector antecedents;
+        ctx.get_cr().justification2literals(reason.get_justification(), antecedents);
+        for (literal item : antecedents) {
+            result.push_back(ctx.literal2expr(~item));
+        }
+        break;
+    }
+    }
+    result.push_back(ctx.literal2expr(lit));
+    m_decode(result);
+}
+
+// Reads existing Boolean state without internalizing an expression or creating an observation.
+int theory_user_propagator::assignment_value_cb(expr* atom, unsigned& prefix) {
+    prefix = ctx.assigned_literals().size();
+    expr_ref encoded(m);
+    m_encode(atom, encoded);
+    ctx.get_rewriter()(encoded);
+    if (!ctx.lit_internalized(encoded)) {
+        return -2;
+    }
+    auto value = ctx.get_assignment(ctx.get_literal(encoded));
+    return value == l_undef ? -1 : value == l_true ? 1 : 0;
+}
+
+// Resolves Boolean aliases without registering a predicate or allocating a new native variable.
+expr_ref theory_user_propagator::canonical_cb(expr* expression) {
+    expr_ref encoded(m);
+    m_encode(expression, encoded);
+    ctx.get_rewriter()(encoded);
+    if (!ctx.lit_internalized(encoded)) {
+        return expr_ref(expression, m);
+    }
+    expr_ref result(ctx.literal2expr(ctx.get_literal(encoded)), m);
+    m_decode(result);
+    return result;
+}
+
+// Retains only bijective bit-coordinate definitions, never query-dependent solved-variable substitutions.
+void theory_user_propagator::definitions(expr_ref_vector const& names, expr_ref_vector const& values) {
+    m_definition_names.reset();
+    m_definition_values.reset();
+    m_encode.reset();
+    m_decode.reset();
+    bv_util bv(m);
+    for (unsigned i = 0; i < names.size(); ++i) {
+        if (!bv.is_bv(names[i]) || !is_app(values[i]) || to_app(values[i])->get_decl_kind() != OP_MKBV) {
+            continue;
+        }
+        auto* bits = to_app(values[i]);
+        bool coordinates = true;
+        for (expr* bit : *bits) {
+            coordinates = coordinates && is_uninterp_const(bit);
+        }
+        if (!coordinates) {
+            continue;
+        }
+        m_definition_names.push_back(names[i]);
+        m_definition_values.push_back(values[i]);
+        m_encode.insert(names[i], values[i]);
+        for (unsigned j = 0; j < bits->get_num_args(); ++j) {
+            expr_ref original(bv.mk_bit2bool(names[i], j), m);
+            m_decode.insert(bits->get_arg(j), original);
+        }
+    }
+}
+
+// Captures current query conditions before internalization can assign or simplify any new literal.
+void theory_user_propagator::query_begin(unsigned count, expr* const* assumptions) {
+    if (!m_query_eh) {
+        return;
+    }
+    expr_ref_vector query(m);
+    if (m_has_query_origin) {
+        query.append(m_query_origin);
+    } else {
+        ptr_vector<expr> assertions;
+        ctx.get_assertions(assertions);
+        for (expr* assertion : assertions) {
+            query.push_back(assertion);
+        }
+        query.append(count, assumptions);
+        m_decode(query);
+    }
+    m_query_eh(m_user_context, this, query.size(), query.data());
+}
+
+// Captures a complete learned clause before any simplification, without proof-log side channels.
+void theory_user_propagator::learned(unsigned count, literal const* literals) {
+    expr_ref_vector clause(m);
+    for (unsigned i = 0; i < count; ++i) {
+        clause.push_back(ctx.literal2expr(literals[i]));
+    }
+    m_decode(clause);
+    m_learned_eh(m_user_context, this, clause.size(), clause.data());
+}
+
+// Visits each live trail entry once and leaves its full reason lazy until the callback requests it.
+void theory_user_propagator::propagate_assignments() {
+    if (!m_assignment_eh || m_assignment_qhead >= ctx.assigned_literals().size()) {
+        return;
+    }
+    ctx.push_trail(value_trail<unsigned>(m_assignment_qhead));
+    const auto limit = ctx.assigned_literals().size();
+    while (m_assignment_qhead < limit && !ctx.inconsistent()) {
+        auto lit = ctx.assigned_literals()[m_assignment_qhead++];
+        if (lit.var() == true_bool_var) {
+            continue;
+        }
+        unsigned kind = 0;
+        switch (ctx.get_justification(lit.var()).get_kind()) {
+        case b_justification::AXIOM:
+            kind = ctx.get_assign_level(lit) <= ctx.get_base_level() ? 1 : 0;
+            break;
+        case b_justification::BIN_CLAUSE: kind = 2; break;
+        case b_justification::CLAUSE: kind = 3; break;
+        case b_justification::JUSTIFICATION: kind = 4; break;
+        }
+        if (ctx.is_assumption(lit)) {
+            kind = 0;
+        }
+        expr_ref target(ctx.literal2expr(lit), m);
+        m_decode(target);
+        flet<literal> active(m_reason_literal, lit);
+        const auto previous = m_prop.size();
+        m_assignment_eh(m_user_context, this, target, kind, m_assignment_qhead);
+        if (m_prop.size() != previous) {
+            break;
+        }
+    }
 }
 
 void theory_user_propagator::propagate_consequence(prop_info const& prop) {
@@ -351,9 +547,11 @@ void theory_user_propagator::propagate_new_fixed(prop_info const& prop) {
 }
 
 
+// Processes mandatory theory work before exposing actual Boolean assignments to the optional observer.
 void theory_user_propagator::propagate() {
-    if (m_qhead == m_prop.size() && m_to_add_qhead == m_to_add.size() && m_replay_qhead == m_clauses_to_replay.size())
+    if (!can_propagate()) {
         return;
+    }
     TRACE(user_propagate, tout << "propagating queue head: " << m_qhead << " prop queue: " << m_prop.size() << "\n");
     force_push();
 
@@ -385,6 +583,9 @@ void theory_user_propagator::propagate() {
     }
     ctx.push_trail(value_trail<unsigned>(m_qhead));
     m_qhead = qhead;
+    if (!ctx.inconsistent()) {
+        propagate_assignments();
+    }
 }
 
 
@@ -424,5 +625,4 @@ void theory_user_propagator::collect_statistics(::statistics& st) const {
     st.update("user-propagations", m_stats.m_num_propagations);
     st.update("user-watched", get_num_vars());
 }
-
 

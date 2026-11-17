@@ -116,6 +116,9 @@ class simplifier_solver : public solver {
     expr_ref_vector             m_assumptions;
     model_converter_ref         m_mc;
     bool                        m_inconsistent = false;
+    bool                        m_user_sources = false;
+    expr_ref_vector             m_inherited_names, m_inherited_values, m_source_assertions;
+    unsigned_vector             m_source_scopes;
     expr_safe_replace           m_core_replace;
 
     void replace(expr_ref_vector& r) {
@@ -126,6 +129,7 @@ class simplifier_solver : public solver {
         }
     }
 
+    // Flushes formulas while preserving the original query and explicit bit-coordinate provenance.
     void flush(expr_ref_vector& assumptions) {
         unsigned qhead = m_preprocess_state.qhead();
         expr_ref_vector orig_assumptions(assumptions);
@@ -143,6 +147,16 @@ class simplifier_solver : public solver {
             m_preprocess_state.advance_qhead();
         }
 
+        if (m_user_sources) {
+            expr_ref_vector names(m), values(m);
+            names.append(m_inherited_names);
+            values.append(m_inherited_values);
+            m_preprocess_state.model_trail().get_bit_definitions(names, values);
+            s->user_propagate_definitions(names, values);
+            expr_ref_vector conditions(m_source_assertions);
+            conditions.append(orig_assumptions);
+            s->user_propagate_query(conditions);
+        }
         m_mc = m_preprocess_state.model_trail().get_model_converter(); 
         m_cached_mc = nullptr;
         for (; qhead < m_fmls.size(); ++qhead)
@@ -183,6 +197,7 @@ public:
         m_preprocess_state(*this),
         m_preprocess(m, s->get_params(), m_preprocess_state),
         m_assumptions(m),
+        m_inherited_names(m), m_inherited_values(m), m_source_assertions(m),
         m_core_replace(m),
         m_proof(m)
     {
@@ -192,21 +207,33 @@ public:
             init_preprocess(m, s->get_params(), m_preprocess, m_preprocess_state);
     }
 
+    // Records each tracked assertion before storing it for preprocessing.
     void assert_expr_core2(expr* t, expr* a) override {
+        if (m_user_sources) {
+            m_source_assertions.push_back(t);
+        }
         m_cached_model = nullptr;
         m_cached_mc    = nullptr;
         proof* pr = m.proofs_enabled() ? m.mk_asserted(t) : nullptr;
         m_fmls.push_back(dependent_expr(m, t, pr, m.mk_leaf(a)));
     }
 
+    // Records each assertion before storing it for preprocessing.
     void assert_expr_core(expr* t) override {
+        if (m_user_sources) {
+            m_source_assertions.push_back(t);
+        }
         m_cached_model = nullptr;
         m_cached_mc    = nullptr;
         proof* pr = m.proofs_enabled() ? m.mk_asserted(t) : nullptr;
         m_fmls.push_back(dependent_expr(m, t, pr, nullptr));
     }
 
-    void push() override { 
+    // Flushes the current level and saves the original assertion boundary for incremental queries.
+    void push() override {
+        if (m_user_sources) {
+            m_source_scopes.push_back(m_source_assertions.size());
+        }
         expr_ref_vector none(m);
         flush(none);
         m_preprocess_state.push();
@@ -215,7 +242,12 @@ public:
         s->push(); 
     }
 
-    void pop(unsigned n) override { 
+    // Restores both original query conditions and native preprocessing scopes.
+    void pop(unsigned n) override {
+        if (m_user_sources && n) {
+            m_source_assertions.shrink(m_source_scopes[m_source_scopes.size() - n]);
+            m_source_scopes.shrink(m_source_scopes.size() - n);
+        }
         s->pop(n);
         m_cached_model = nullptr;
         m_preprocess.pop(n);
@@ -265,6 +297,7 @@ public:
         return m_proof;
     }
 
+    // Preserves native source definitions when translating the solver and its current formula.
     solver* translate(ast_manager& m, params_ref const& p) override { 
         solver* new_s = s->translate(m, p);
         ast_translation tr(get_manager(), m);
@@ -274,6 +307,20 @@ public:
         if (m_mc) 
             result->m_mc = m_mc->translate(tr);
 
+        result->m_user_sources = m_user_sources;
+        for (expr* assertion : m_source_assertions) {
+            result->m_source_assertions.push_back(tr(assertion));
+        }
+        if (m_user_sources) {
+            expr_ref_vector names(get_manager()), values(get_manager());
+            names.append(m_inherited_names);
+            values.append(m_inherited_values);
+            m_preprocess_state.model_trail().get_bit_definitions(names, values);
+            for (unsigned i = 0; i < names.size(); ++i) {
+                result->m_inherited_names.push_back(tr(names.get(i)));
+                result->m_inherited_values.push_back(tr(values.get(i)));
+            }
+        }
         // copy m_preprocess_state?
         return result;
     }    
@@ -384,7 +431,27 @@ public:
         user_propagator::fresh_eh_t&  fresh_eh) override {
         s->user_propagate_init(ctx, push_eh, pop_eh, fresh_eh);
     }        
-    void user_propagate_register_fixed(user_propagator::fixed_eh_t& fixed_eh) override { s->user_propagate_register_fixed(fixed_eh); }    
+    void user_propagate_register_fixed(user_propagator::fixed_eh_t& fixed_eh) override { s->user_propagate_register_fixed(fixed_eh); }
+
+    // Forwards actual Boolean assignment notifications to the SMT user propagator.
+    void user_propagate_register_assignment(user_propagator::assignment_eh_t& assignment_eh) override { s->user_propagate_register_assignment(assignment_eh); }
+    // Forwards instance-local query and learned-clause sources.
+    void user_propagate_register_sources(user_propagator::source_eh_t& query, user_propagator::source_eh_t& learned) override {
+        if (!m_user_sources && (m_fmls.size() || s->get_num_assertions() || s->get_scope_level())) {
+            throw default_exception("install native source handlers before adding simplifier-solver assertions");
+        }
+        m_user_sources = true;
+        s->user_propagate_register_sources(query, learned);
+    }
+    // Forwards original query assertions before preprocessing can remove their conditions.
+    void user_propagate_query(expr_ref_vector const& conditions) override {
+        s->user_propagate_query(conditions);
+    }
+    // Forwards semantic preprocessing definitions without changing solver heuristics.
+    void user_propagate_definitions(expr_ref_vector const& names, expr_ref_vector const& values) override {
+        s->user_propagate_definitions(names, values);
+    }
+
     void user_propagate_register_final(user_propagator::final_eh_t& final_eh) override { s->user_propagate_register_final(final_eh); }
     void user_propagate_register_eq(user_propagator::eq_eh_t& eq_eh) override { s->user_propagate_register_eq(eq_eh); }    
     void user_propagate_register_diseq(user_propagator::eq_eh_t& diseq_eh) override { s->user_propagate_register_diseq(diseq_eh); } 

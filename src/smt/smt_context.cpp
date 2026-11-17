@@ -3694,6 +3694,9 @@ namespace smt {
         if (!check_preamble(reset_cancel)) return l_undef;
         SASSERT(at_base_level());
         setup_context(false);
+        if (m_user_propagator) {
+            m_user_propagator->query_begin(num_assumptions, assumptions);
+        }
         search_completion sc(*this);
         if (m_fparams.m_threads > 1 && !m.has_trace_stream()) {            
             expr_ref_vector asms(m, num_assumptions, assumptions);

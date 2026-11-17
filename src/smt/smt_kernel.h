@@ -312,6 +312,12 @@ namespace smt {
             user_propagator::fresh_eh_t&     fresh_eh);
 
         void user_propagate_register_fixed(user_propagator::fixed_eh_t& fixed_eh);
+        // Installs a listener for actual Boolean assignments and lazy complete reasons.
+        void user_propagate_register_assignment(user_propagator::assignment_eh_t& assignment_eh);
+        // Forwards instance-specific source callbacks and semantic preprocessing definitions.
+        void user_propagate_register_sources(user_propagator::source_eh_t& query, user_propagator::source_eh_t& learned);
+        void user_propagate_query(expr_ref_vector const& conditions);
+        void user_propagate_definitions(expr_ref_vector const& names, expr_ref_vector const& values);
 
         void user_propagate_register_final(user_propagator::final_eh_t& final_eh);
         

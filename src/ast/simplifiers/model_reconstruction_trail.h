@@ -36,7 +36,7 @@ class dependent_expr_state;
 class model_reconstruction_trail {
 
     struct entry {
-        enum entry_t { loose_subst, loose_constraints, hide, defined};
+        enum entry_t { loose_subst, loose_constraints, hide, defined, bit_defined};
 
         entry_t                       m_ty;
         scoped_ptr<expr_substitution> m_subst;
@@ -172,6 +172,12 @@ public:
         add_model_var(f);
     }
 
+    // Marks a bit-blaster coordinate definition explicitly instead of inferring origins from names or syntax.
+    void push_bits(func_decl* f, expr* def) {
+        push(f, def, nullptr, {});
+        m_trail.back()->m_ty = entry::bit_defined;
+    }
+
     /**
      * add definitions
      */
@@ -193,6 +199,8 @@ public:
      * retrieve the current model converter corresponding to chaining substitutions from the trail.
      */
     model_converter_ref get_model_converter();
+    // Exposes only explicitly recorded bit-blaster coordinates, excluding solved-variable substitutions.
+    void get_bit_definitions(expr_ref_vector& names, expr_ref_vector& values) const;
 
     std::ostream& display(std::ostream& out) const;
 };

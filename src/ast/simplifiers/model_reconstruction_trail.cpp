@@ -244,3 +244,16 @@ std::ostream& model_reconstruction_trail::display(std::ostream& out) const {
     }
     return out;
 }
+
+// Exposes explicitly recorded bit coordinates without treating model reconstruction choices as equalities.
+void model_reconstruction_trail::get_bit_definitions(expr_ref_vector& names, expr_ref_vector& values) const {
+    for (auto* item : m_trail) {
+        if (!item->m_active || item->m_ty != entry::bit_defined) {
+            continue;
+        }
+        for (auto const& [decl, value, dependency] : item->m_defs) {
+            names.push_back(m.mk_const(decl));
+            values.push_back(value);
+        }
+    }
+}

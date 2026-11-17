@@ -4658,6 +4658,36 @@ namespace z3 {
             return p->fresh(*c);
         }
 
+        // Preserves capture-only query ownership while exposing the complete current conditions.
+        static void query_eh(void* self, Z3_solver_callback cb, unsigned count, Z3_ast const* expressions) {
+            auto* p = static_cast<user_propagator_base*>(self);
+            scoped_cb active(p, cb);
+            expr_vector query(p->ctx());
+            for (unsigned i = 0; i < count; ++i) {
+                query.push_back(expr(p->ctx(), expressions[i]));
+            }
+            p->query(query);
+        }
+
+        // Preserves capture-only learned-clause ownership across translated propagator instances.
+        static void learned_eh(void* self, Z3_solver_callback cb, unsigned count, Z3_ast const* expressions) {
+            auto* p = static_cast<user_propagator_base*>(self);
+            scoped_cb active(p, cb);
+            expr_vector clause(p->ctx());
+            for (unsigned i = 0; i < count; ++i) {
+                clause.push_back(expr(p->ctx(), expressions[i]));
+            }
+            p->learned(clause);
+        }
+
+        // Binds the callback context while reporting an actual signed Boolean assignment.
+        static void assignment_eh(void* self, Z3_solver_callback cb, Z3_ast literal, unsigned kind, unsigned prefix) {
+            auto* p = static_cast<user_propagator_base*>(self);
+            scoped_cb callback(p, cb);
+            expr target(p->ctx(), literal);
+            p->assignment(target, kind, prefix);
+        }
+
         static void fixed_eh(void* _p, Z3_solver_callback cb, Z3_ast _var, Z3_ast _value) {
             user_propagator_base* p = static_cast<user_propagator_base*>(_p);
             scoped_cb _cb(p, cb);
@@ -4708,6 +4738,48 @@ namespace z3 {
 
         virtual void push() = 0;
         virtual void pop(unsigned num_scopes) = 0;
+
+        // Receives actual Boolean assignments independently of fixed-term registrations.
+        virtual void assignment(expr const&, unsigned, unsigned) {}
+
+        // Enables actual assignment callbacks; fresh instances inherit the native registration.
+        void register_assignment() {
+            if (s) {
+                Z3_solver_propagate_assignment(ctx(), *s, assignment_eh);
+            }
+        }
+
+        // Receives capture-only query conditions before Boolean propagation starts.
+        virtual void query(expr_vector const&) {}
+        // Receives a complete clause produced by native conflict analysis.
+        virtual void learned(expr_vector const&) {}
+        // Installs instance-owned source handlers, enabling learned clauses only when requested.
+        void register_sources(bool learned = true) {
+            if (s) {
+                Z3_solver_propagate_sources(ctx(), *s, query_eh, learned ? learned_eh : nullptr);
+            }
+        }
+
+        // Retrieves the complete actual reason during the current assignment callback.
+        expr_vector assignment_reason() {
+            auto result = Z3_solver_propagate_reason(ctx(), cb);
+            ctx().check_error();
+            return expr_vector(ctx(), result);
+        }
+
+        // Resolves a predicate to its actual signed native watch identity without registration.
+        expr assignment_canonical(expr const& expression) {
+            auto result = Z3_solver_propagate_canonical(ctx(), cb, expression);
+            ctx().check_error();
+            return expr(ctx(), result);
+        }
+
+        // Reads native Boolean state and trail length without registering an observation.
+        int assignment_value(expr const& atom, unsigned& prefix) {
+            auto result = Z3_solver_propagate_assignment_value(ctx(), cb, atom, &prefix);
+            ctx().check_error();
+            return result;
+        }
 
         virtual ~user_propagator_base() {
             for (auto& subcontext : subcontexts) {
@@ -5132,4 +5204,3 @@ namespace z3 {
 /**@}*/
 /**@}*/
 #undef Z3_THROW
-

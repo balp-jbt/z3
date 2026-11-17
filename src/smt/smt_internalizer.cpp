@@ -1395,6 +1395,9 @@ namespace smt {
     */
     clause * context::mk_clause(unsigned num_lits, literal * lits, justification * j, clause_kind k, clause_del_eh * del_eh) {
         TRACE(mk_clause, display_literals_verbose(tout << "creating clause: " << literal_vector(num_lits, lits) << "\n", num_lits, lits) << "\n";);
+        if (k == CLS_LEARNED && m_user_propagator && m_user_propagator->has_learned()) {
+            m_user_propagator->learned(num_lits, lits);
+        }
         m_clause_proof.add(num_lits, lits, k, j);
         literal_buffer simp_lits;
         switch (k) {

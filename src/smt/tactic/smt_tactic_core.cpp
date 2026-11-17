@@ -326,6 +326,8 @@ public:
     user_propagator::pop_eh_t   m_pop_eh;
     user_propagator::fresh_eh_t m_fresh_eh;
     user_propagator::fixed_eh_t m_fixed_eh;
+    user_propagator::assignment_eh_t m_assignment_eh;
+    user_propagator::source_eh_t m_query_eh, m_learned_eh;
     user_propagator::final_eh_t m_final_eh;
     user_propagator::eq_eh_t    m_eq_eh;
     user_propagator::eq_eh_t    m_diseq_eh;
@@ -344,6 +346,12 @@ public:
             return;
         m_ctx.load()->user_propagate_init(m_user_ctx, m_push_eh, m_pop_eh, m_fresh_eh);
         if (m_fixed_eh)   m_ctx.load()->user_propagate_register_fixed(m_fixed_eh);
+        if (m_assignment_eh) {
+            m_ctx.load()->user_propagate_register_assignment(m_assignment_eh);
+        }
+        if (m_query_eh || m_learned_eh) {
+            m_ctx.load()->user_propagate_register_sources(m_query_eh, m_learned_eh);
+        }
         if (m_final_eh)   m_ctx.load()->user_propagate_register_final(m_final_eh);
         if (m_eq_eh)      m_ctx.load()->user_propagate_register_eq(m_eq_eh);
         if (m_diseq_eh)   m_ctx.load()->user_propagate_register_diseq(m_diseq_eh);
@@ -360,6 +368,7 @@ public:
         m_user_ctx = nullptr;
         m_vars.reset();
         m_fixed_eh = nullptr;
+        m_assignment_eh = nullptr;
         m_final_eh = nullptr;
         m_eq_eh = nullptr;
         m_diseq_eh = nullptr;
@@ -388,6 +397,17 @@ public:
 
     void user_propagate_register_fixed(user_propagator::fixed_eh_t& fixed_eh) override {
         m_fixed_eh = fixed_eh;
+    }
+
+    // Preserves the actual-assignment listener until the tactic creates its SMT context.
+    void user_propagate_register_assignment(user_propagator::assignment_eh_t& handler) override {
+        m_assignment_eh = handler;
+    }
+
+    // Delays source listener installation until the SMT context exists.
+    void user_propagate_register_sources(user_propagator::source_eh_t& query, user_propagator::source_eh_t& learned) override {
+        m_query_eh = query;
+        m_learned_eh = learned;
     }
 
     void user_propagate_register_final(user_propagator::final_eh_t& final_eh) override {
@@ -443,4 +463,3 @@ tactic * mk_smt_tactic_core_using(ast_manager& m, bool auto_config, params_ref c
     p.set_bool("auto_config", auto_config);
     return using_params(pp.enable() ? mk_parallel_smt_tactic(m, p) : mk_seq_smt_tactic(m, p), p);
 }
-

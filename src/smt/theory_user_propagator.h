@@ -25,6 +25,7 @@ Notes:
 #include "util/uint_set.h"
 #include "smt/smt_theory.h"
 #include "solver/solver.h"
+#include "ast/rewriter/expr_safe_replace.h"
 
 namespace smt {
     class theory_user_propagator : public theory, public user_propagator::callback {
@@ -62,6 +63,14 @@ namespace smt {
         user_propagator::fresh_eh_t     m_fresh_eh;
         user_propagator::final_eh_t     m_final_eh;
         user_propagator::fixed_eh_t     m_fixed_eh;
+        user_propagator::assignment_eh_t m_assignment_eh;
+        user_propagator::source_eh_t m_query_eh, m_learned_eh;
+        expr_safe_replace m_encode, m_decode;
+        expr_ref_vector m_definition_names, m_definition_values;
+        expr_ref_vector m_query_origin;
+        bool m_has_query_origin = false;
+        unsigned                       m_assignment_qhead = 0;
+        literal                        m_reason_literal = null_literal;
         user_propagator::eq_eh_t        m_eq_eh;
         user_propagator::eq_eh_t        m_diseq_eh;
         user_propagator::created_eh_t   m_created_eh;
@@ -99,6 +108,9 @@ namespace smt {
 
         void force_push();
 
+        // Reports actual trail assignments after ordinary propagation reaches this theory callback.
+        void propagate_assignments();
+
         void propagate_consequence(prop_info const& prop);
         void propagate_new_fixed(prop_info const& prop);
         
@@ -128,6 +140,24 @@ namespace smt {
 
         void register_final(user_propagator::final_eh_t& final_eh) { m_final_eh = final_eh; }
         void register_fixed(user_propagator::fixed_eh_t& fixed_eh) { m_fixed_eh = fixed_eh; }
+        // Enables lazy traversal of the existing Boolean trail without registering every variable.
+        void register_assignment(user_propagator::assignment_eh_t& handler) { m_assignment_eh = handler; }
+        // Stores source handlers on the instance copied by fresh.
+        void register_sources(user_propagator::source_eh_t& query, user_propagator::source_eh_t& learned) {
+            m_query_eh = query;
+            m_learned_eh = learned;
+        }
+        void definitions(expr_ref_vector const& names, expr_ref_vector const& values);
+        // Stores the complete original query supplied by the preprocessing wrapper.
+        void query_origin(expr_ref_vector const& conditions) {
+            m_query_origin.reset();
+            m_query_origin.append(conditions);
+            m_has_query_origin = true;
+        }
+        void query_begin(unsigned count, expr* const* assumptions);
+        void learned(unsigned count, literal const* literals);
+        // Tests optional capture before materializing any learned clause expressions.
+        bool has_learned() const { return static_cast<bool>(m_learned_eh); }
         void register_eq(user_propagator::eq_eh_t& eq_eh) { m_eq_eh = eq_eh; }
         void register_diseq(user_propagator::eq_eh_t& diseq_eh) { m_diseq_eh = diseq_eh; }
         void register_created(user_propagator::created_eh_t& created_eh) { m_created_eh = created_eh; }
@@ -139,6 +169,12 @@ namespace smt {
         bool propagate_cb(unsigned num_fixed, expr* const* fixed_ids, unsigned num_eqs, expr* const* lhs, expr* const* rhs, expr* conseq) override;
         void register_cb(expr* e) override;
         bool next_split_cb(expr* e, unsigned idx, lbool phase) override;
+        // Exports the complete current binary, clause, root-unit or theory justification.
+        void reason_cb(expr_ref_vector& result) override;
+        // Returns native truth and trail length without changing the solver state.
+        int assignment_value_cb(expr* atom, unsigned& prefix) override;
+        // Returns the native signed Boolean identity in semantic vocabulary.
+        expr_ref canonical_cb(expr* expression) override;
 
         void new_fixed_eh(theory_var v, expr* value, unsigned num_lits, literal const* jlits);
         void decide(bool_var& var, bool& is_pos);

@@ -54,8 +54,9 @@ void bit_blaster_simplifier::reduce() {
         m_rewriter.end_rewrite(const2bits, newbits);
         for (auto* f : newbits)
             m_fmls.model_trail().hide(f);
-        for (auto const& [f, v] : const2bits) 
-            m_fmls.model_trail().push(f, v, nullptr, {});
+        for (auto const& [f, v] : const2bits) {
+            m_fmls.model_trail().push_bits(f, v);
+        }
     }
     m_rewriter.cleanup();
 }

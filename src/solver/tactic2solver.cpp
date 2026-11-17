@@ -103,6 +103,24 @@ public:
         m_tactic->user_propagate_register_fixed(fixed_eh);
     }
 
+    // Forwards actual Boolean assignment notifications to the SMT user propagator.
+    void user_propagate_register_assignment(user_propagator::assignment_eh_t& assignment_eh) override {
+        m_tactic->user_propagate_register_assignment(assignment_eh);
+    }
+    // Forwards instance-local query and learned-clause sources.
+    void user_propagate_register_sources(user_propagator::source_eh_t& query, user_propagator::source_eh_t& learned) override {
+        m_tactic->user_propagate_register_sources(query, learned);
+    }
+    // Forwards original query assertions before preprocessing can remove their conditions.
+    void user_propagate_query(expr_ref_vector const& conditions) override {
+        m_tactic->user_propagate_query(conditions);
+    }
+    // Forwards semantic preprocessing definitions without changing solver heuristics.
+    void user_propagate_definitions(expr_ref_vector const& names, expr_ref_vector const& values) override {
+        m_tactic->user_propagate_definitions(names, values);
+    }
+
+
     void user_propagate_register_final(user_propagator::final_eh_t& final_eh) override {
         m_tactic->user_propagate_register_final(final_eh);
     }

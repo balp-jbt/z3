@@ -308,6 +308,23 @@ namespace smt {
         m_imp->m_kernel.user_propagate_register_fixed(fixed_eh);
     }
 
+    // Preserves source callback ownership through the SMT kernel facade.
+    void kernel::user_propagate_register_sources(user_propagator::source_eh_t& query, user_propagator::source_eh_t& learned) {
+        m_imp->m_kernel.user_propagate_register_sources(query, learned);
+    }
+    // Forwards original assertions and assumptions without preprocessing them.
+    void kernel::user_propagate_query(expr_ref_vector const& conditions) {
+        m_imp->m_kernel.user_propagate_query(conditions);
+    }
+    // Forwards explicit bit coordinates before the next query is internalized.
+    void kernel::user_propagate_definitions(expr_ref_vector const& names, expr_ref_vector const& values) {
+        m_imp->m_kernel.user_propagate_definitions(names, values);
+    }
+    // Forwards actual Boolean assignment notifications to the SMT user propagator.
+    void kernel::user_propagate_register_assignment(user_propagator::assignment_eh_t& assignment_eh) {
+        m_imp->m_kernel.user_propagate_register_assignment(assignment_eh);
+    }
+
     void kernel::user_propagate_register_on_binding(user_propagator::binding_eh_t& on_binding) {
         m_imp->m_kernel.user_propagate_register_on_binding(on_binding);
     }

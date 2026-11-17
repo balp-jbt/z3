@@ -1080,6 +1080,65 @@ extern "C" {
         Z3_CATCH;
     }
 
+    // Installs an optional listener for actual Boolean assignments and lazy complete reasons.
+    void Z3_API Z3_solver_propagate_assignment(Z3_context c, Z3_solver s, Z3_assignment_eh handler) {
+        Z3_TRY;
+        RESET_ERROR_CODE();
+        user_propagator::assignment_eh_t callback =
+            (void(*)(void*, user_propagator::callback*, expr*, unsigned, unsigned))handler;
+        to_solver_ref(s)->user_propagate_register_assignment(callback);
+        Z3_CATCH;
+    }
+
+    // Registers capture-only source handlers bound to each native propagator instance.
+    void Z3_API Z3_solver_propagate_sources(Z3_context c, Z3_solver s, Z3_source_eh query, Z3_source_eh learned) {
+        Z3_TRY;
+        RESET_ERROR_CODE();
+        user_propagator::source_eh_t on_query = (void(*)(void*, user_propagator::callback*, unsigned, expr* const*))query;
+        user_propagator::source_eh_t on_learned = (void(*)(void*, user_propagator::callback*, unsigned, expr* const*))learned;
+        to_solver_ref(s)->user_propagate_register_sources(on_query, on_learned);
+        Z3_CATCH;
+    }
+
+    // Retains a complete native reason in an API-owned vector for the duration chosen by the caller.
+    Z3_ast_vector Z3_API Z3_solver_propagate_reason(Z3_context c, Z3_solver_callback cb) {
+        Z3_TRY;
+        RESET_ERROR_CODE();
+        expr_ref_vector reason(mk_c(c)->m());
+        reinterpret_cast<user_propagator::callback*>(cb)->reason_cb(reason);
+        auto* result = alloc(Z3_ast_vector_ref, *mk_c(c), mk_c(c)->m());
+        mk_c(c)->save_object(result);
+        for (expr* literal : reason) {
+            result->m_ast_vector.push_back(literal);
+        }
+        return of_ast_vector(result);
+        Z3_CATCH_RETURN(nullptr);
+    }
+
+    // Queries existing assignment state without causing term registration or propagation.
+    int Z3_API Z3_solver_propagate_assignment_value(Z3_context c, Z3_solver_callback cb, Z3_ast atom, unsigned* prefix) {
+        Z3_TRY;
+        RESET_ERROR_CODE();
+        CHECK_IS_EXPR(atom, -2);
+        if (!is_bool_expr(c, atom)) {
+            SET_ERROR_CODE(Z3_SORT_ERROR, "expected a Boolean expression");
+            return -2;
+        }
+        return reinterpret_cast<user_propagator::callback*>(cb)->assignment_value_cb(to_expr(atom), *prefix);
+        Z3_CATCH_RETURN(-2);
+    }
+
+    // Exposes the exact native signed watch identity without registering or freezing a predicate.
+    Z3_ast Z3_API Z3_solver_propagate_canonical(Z3_context c, Z3_solver_callback cb, Z3_ast expression) {
+        Z3_TRY;
+        RESET_ERROR_CODE();
+        CHECK_IS_EXPR(expression, nullptr);
+        expr_ref result = reinterpret_cast<user_propagator::callback*>(cb)->canonical_cb(to_expr(expression));
+        mk_c(c)->save_ast_trail(result);
+        return of_ast(result);
+        Z3_CATCH_RETURN(nullptr);
+    }
+
     void Z3_API Z3_solver_propagate_fixed(
         Z3_context  c, 
         Z3_solver   s,
